@@ -17,6 +17,11 @@ export class VrmManager {
       startOfBlink: 0,
       blinkDuration: 0.15,
     };
+
+    // 립싱크 상태 관리
+    this.audioContext = null;
+    this.audioAnalyser = null;
+    this.audioDataArray = null;
   }
 
   initialize(canvas) {
@@ -49,7 +54,9 @@ export class VrmManager {
     const delta = this.clock.getDelta();
     if (this.currentVrm) {
       this.currentVrm.update(delta);
+      this.setRestingPose(this.currentVrm);
       this.handleBlinking(delta);
+      this.handleLipSync(); // 립싱크 처리
     }
     this.renderer.render(this.scene, this.camera);
   }
@@ -75,9 +82,23 @@ export class VrmManager {
     );
   }
 
+  setRestingPose(vrm) {
+    if (!vrm) return;
+
+    const leftUpperArm = vrm.humanoid.getRawBoneNode(VRMHumanBoneName.LeftUpperArm);
+    if (leftUpperArm) {
+      leftUpperArm.rotation.z = THREE.MathUtils.degToRad(-80);
+    }
+
+    const rightUpperArm = vrm.humanoid.getRawBoneNode(VRMHumanBoneName.RightUpperArm);
+    if (rightUpperArm) {
+      rightUpperArm.rotation.z = THREE.MathUtils.degToRad(80);
+    }
+  }
+
   updateCameraPosition(vrm) {
     if (!vrm) return;
-    const headBone = vrm.humanoid.getBoneNode(VRMHumanBoneName.Head) ?? vrm.humanoid.getBoneNode(VRMHumanBoneName.Neck);
+    const headBone = vrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head) ?? vrm.humanoid.getRawBoneNode(VRMHumanBoneName.Neck);
     if (!headBone) {
       console.warn('모델에서 머리 또는 목 뼈를 찾을 수 없습니다.');
       return;
@@ -85,7 +106,7 @@ export class VrmManager {
     const headWorldPosition = new THREE.Vector3();
     headBone.getWorldPosition(headWorldPosition);
     const lookAtTarget = headWorldPosition;
-    const cameraOffset = new THREE.Vector3(0, 0.05, 0.7);
+    const cameraOffset = new THREE.Vector3(0, 0.05, 0.9);
     const cameraPosition = new THREE.Vector3().copy(headWorldPosition).add(cameraOffset);
     this.camera.position.copy(cameraPosition);
     this.camera.lookAt(lookAtTarget);
@@ -114,9 +135,50 @@ export class VrmManager {
     }
   }
 
+  setupLipSync(audio) {
+    if (!this.audioContext) {
+      this.audioContext = new AudioContext();
+    }
+
+    const source = this.audioContext.createMediaElementSource(audio);
+    this.audioAnalyser = this.audioContext.createAnalyser();
+    this.audioAnalyser.fftSize = 256;
+
+    source.connect(this.audioAnalyser);
+    this.audioAnalyser.connect(this.audioContext.destination);
+
+    const bufferLength = this.audioAnalyser.frequencyBinCount;
+    this.audioDataArray = new Uint8Array(bufferLength);
+
+    console.log('립싱크가 설정되었습니다.');
+  }
+
+  handleLipSync() {
+    if (!this.currentVrm || !this.audioAnalyser || !this.audioDataArray) {
+      return;
+    }
+
+    this.audioAnalyser.getByteFrequencyData(this.audioDataArray);
+
+    let sum = 0;
+    for (let i = 0; i < this.audioDataArray.length; i++) {
+      sum += this.audioDataArray[i];
+    }
+    const average = sum / this.audioDataArray.length;
+
+    const volume = Math.min(1.0, (average / 128) * 1.5); 
+    
+    if (this.currentVrm.expressionManager) {
+      this.currentVrm.expressionManager.setValue('a', volume);
+    }
+  }
+
   dispose() {
     if (this.frameId) {
       cancelAnimationFrame(this.frameId);
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
     }
     console.log('VrmManager 리소스 정리');
   }

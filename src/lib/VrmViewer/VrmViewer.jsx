@@ -28,7 +28,7 @@ const VrmViewer = ({ modelUrl, audio }) => {
 
   useEffect(() => {
     if (audio && vrmManagerRef.current) {
-      console.log('새 오디오 감지:', audio);
+      vrmManagerRef.current.setupLipSync(audio);
     }
   }, [audio]);
 
